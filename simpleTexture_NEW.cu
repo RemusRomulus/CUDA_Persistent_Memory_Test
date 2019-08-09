@@ -68,11 +68,55 @@ __global__ void accum_buffer_alloc(int width, int height)
 	accum_buffer = (float*)malloc(sizeof(float) * width * height);
 }
 
+__global__ void accum_buffer_init(int width, int height)
+{
+	unsigned int x = blockIdx.x*blockDim.x + threadIdx.x;
+	unsigned int y = blockIdx.y*blockDim.y + threadIdx.y;
+
+	if(x < width && y < height)
+		accum_buffer[y*width + x] = 0.0f;
+}
 
 __global__ void accum_buffer_free()
 {
 	free(accum_buffer);
 }
+
+__global__ void accum_buffer_copy(float* out, int width, int height)
+{
+	unsigned int x = blockIdx.x*blockDim.x + threadIdx.x;
+	unsigned int y = blockIdx.y*blockDim.y + threadIdx.y;
+
+	if(x < width && y < height)
+		out[y*width + x] = accum_buffer[y*width + x];
+}
+
+void cuda_accum_buffer_alloc(int width, int height)
+{
+	accum_buffer_alloc<<<1,1>>>(width, height);
+}
+
+void cuda_accum_buffer_init(int width, int height)
+{
+	dim3 threads(8, 8);
+	dim3 grid((int)ceil(width/ 8), (int)ceil(height/ 8));
+
+	accum_buffer_init<<<grid, threads>>>(width, height);
+}
+
+void cuda_accum_buffer_free()
+{
+	accum_buffer_free<<<1,1>>>();
+}
+
+void cuda_accum_buffer_copy(float* out, int width, int height)
+{
+	dim3 threads(8, 8);
+	dim3 grid((int)ceil(width / 8), (int)ceil(height / 8));
+
+	accum_buffer_copy<<<grid, threads>>>(out, width, height);
+}
+
 
 
 
@@ -95,6 +139,7 @@ __global__ void transformKernel(float *outputData,
 
     // read from texture and write to global memory
     outputData[y*width + x] = tex2D(tex, tu+0.5f, tv+0.5f);
+	accum_buffer[y*width + x] += outputData[y*width + x] / 2;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,7 +183,27 @@ int main(int argc, char **argv)
         }
     }
 
+	cuda_accum_buffer_alloc(width, height);
+	cuda_accum_buffer_init(width, height);
+
     runTest(argc, argv);
+
+
+	// Allocate device memory for result
+	float *alt_dst = NULL;
+	checkCudaErrors(cudaMalloc((void **)&alt_dst, width * height * sizeof(float)));
+	cuda_accum_buffer_copy(alt_dst, width, height);
+
+	// Allocate mem for the result on host side
+	float *h_alt_data = (float *)malloc(width * height * sizeof(float));
+	// copy result from device to host
+	checkCudaErrors(cudaMemcpy(h_alt_data,
+		alt_dst,
+		width * height * sizeof(float),
+		cudaMemcpyDeviceToHost));
+	
+	sdkSavePGM("Accum_Buffer_Output.pgm", h_alt_data, width, height);
+	cuda_accum_buffer_free();
 
     printf("%s completed, returned %s\n",
            sampleName,
