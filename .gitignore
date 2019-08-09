@@ -1,0 +1,9 @@
+*
+!*.cpp
+!*.cu
+!*.h
+!*.cuh
+!readme.txt
+!Mandlebrot*2015.sln
+!Mandlebrot*2015.vcxproj
+!.gitignore
